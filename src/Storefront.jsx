@@ -432,6 +432,7 @@ function TestimonialForm() {
     try {
       await sb("testimonials", {
         method: "POST",
+        prefer: "return=minimal",
         body: JSON.stringify([{ customer_name: name.trim(), city: city.trim(), rating, text: text.trim(), status: "pending" }]),
       });
       setStatus("sent");

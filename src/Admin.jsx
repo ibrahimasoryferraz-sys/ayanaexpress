@@ -799,10 +799,10 @@ function SettingsTab() {
     setSaveState("saving");
     try {
       if (SUPABASE_CONFIGURED) {
-        await sb("store_settings?on_conflict=id", {
-          method: "POST",
-          prefer: "resolution=merge-duplicates,return=representation",
-          body: JSON.stringify([{ id: 1, ...settings, updated_at: new Date().toISOString() }]),
+        await sb("store_settings?id=eq.1", {
+          method: "PATCH",
+          prefer: "return=minimal",
+          body: JSON.stringify({ ...settings, updated_at: new Date().toISOString() }),
         });
       } else {
         localStorage.setItem("ayana_admin_settings", JSON.stringify(settings));

@@ -697,24 +697,44 @@ function CustomersTab({ orders }) {
 /* ---------------- Testemunhos (moderação) ---------------- */
 function TestimonialsTab({ testimonials, setTestimonials }) {
   const [filter, setFilter] = useState("pending");
+  const [error, setError] = useState("");
   const filtered = filter === "all" ? testimonials : testimonials.filter((t) => t.status === filter);
 
   const updateStatus = async (id, status) => {
-    setTestimonials((prev) => prev.map((t) => t.id === id ? { ...t, status } : t));
+    setError("");
     if (SUPABASE_CONFIGURED) {
-      try { await sb(`testimonials?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ status }) }); } catch (e) { console.error(e); }
+      try {
+        await sb(`testimonials?id=eq.${id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ status }) });
+      } catch (e) {
+        console.error(e);
+        setError("Não foi possível guardar. A sessão pode ter expirado — tente sair e voltar a entrar.");
+        return;
+      }
     }
+    setTestimonials((prev) => prev.map((t) => t.id === id ? { ...t, status } : t));
   };
   const remove = async (id) => {
     if (!confirm("Eliminar este testemunho?")) return;
-    setTestimonials((prev) => prev.filter((t) => t.id !== id));
+    setError("");
     if (SUPABASE_CONFIGURED) {
-      try { await sb(`testimonials?id=eq.${id}`, { method: "DELETE" }); } catch (e) { console.error(e); }
+      try {
+        await sb(`testimonials?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" });
+      } catch (e) {
+        console.error(e);
+        setError("Não foi possível eliminar. A sessão pode ter expirado — tente sair e voltar a entrar.");
+        return;
+      }
     }
+    setTestimonials((prev) => prev.filter((t) => t.id !== id));
   };
 
   return (
     <div>
+      {error && (
+        <div className="mb-4 rounded-xl border p-3 text-sm" style={{ borderColor: BRAND.red, backgroundColor: BRAND.redSoft, color: BRAND.red }}>
+          {error}
+        </div>
+      )}
       <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1">
         {[{ id: "pending", label: "Pendentes" }, { id: "approved", label: "Aprovados" }, { id: "rejected", label: "Rejeitados" }, { id: "all", label: "Todos" }].map((s) => (
           <button key={s.id} onClick={() => setFilter(s.id)}

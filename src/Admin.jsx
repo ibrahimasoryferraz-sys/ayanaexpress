@@ -704,7 +704,11 @@ function TestimonialsTab({ testimonials, setTestimonials }) {
     setError("");
     if (SUPABASE_CONFIGURED) {
       try {
-        await sb(`testimonials?id=eq.${id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ status }) });
+        const result = await sb(`testimonials?id=eq.${id}`, { method: "PATCH", prefer: "return=representation", body: JSON.stringify({ status }) });
+        if (!result || result.length === 0) {
+          setError("A alteração não foi guardada (sessão provavelmente expirada). Clique em \"Sair\" no topo e volte a entrar.");
+          return;
+        }
       } catch (e) {
         console.error(e);
         setError("Não foi possível guardar. A sessão pode ter expirado — tente sair e voltar a entrar.");

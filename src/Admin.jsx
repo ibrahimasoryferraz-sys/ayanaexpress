@@ -80,7 +80,32 @@ async function signIn(email, password) {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error_description || data.msg || "Falha no login");
-  return { access_token: data.access_token, user: data.user, expires_at: Date.now() + (data.expires_in || 3600) * 1000 };
+  return {
+    access_token: data.access_token, refresh_token: data.refresh_token, user: data.user,
+    expires_at: Date.now() + (data.expires_in || 3600) * 1000,
+  };
+}
+
+async function refreshSession(refresh_token) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || "Falha ao renovar sessão");
+  return {
+    access_token: data.access_token, refresh_token: data.refresh_token, user: data.user,
+    expires_at: Date.now() + (data.expires_in || 3600) * 1000,
+  };
+}
+
+function decodeJwt(token) {
+  try {
+    const payload = token.split(".")[1];
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(json);
+  } catch { return null; }
 }
 
 const fmtKz = (n) => new Intl.NumberFormat("pt-PT").format(Math.round(n || 0)) + " Kz";
@@ -823,11 +848,15 @@ function SettingsTab() {
     setSaveState("saving");
     try {
       if (SUPABASE_CONFIGURED) {
-        await sb("store_settings?id=eq.1", {
+        const result = await sb("store_settings?id=eq.1", {
           method: "PATCH",
-          prefer: "return=minimal",
+          prefer: "return=representation",
           body: JSON.stringify({ ...settings, updated_at: new Date().toISOString() }),
         });
+        if (!result || result.length === 0) {
+          setSaveState("session-expired");
+          return;
+        }
       } else {
         localStorage.setItem("ayana_admin_settings", JSON.stringify(settings));
       }
@@ -899,6 +928,7 @@ function SettingsTab() {
         {saveState === "saving" ? "A guardar…" : saveState === "saved" ? "Guardado ✓" : "Guardar configurações"}
       </button>
       {saveState === "error" && <p className="text-xs text-center" style={{ color: BRAND.red }}>Não foi possível guardar. Tente novamente.</p>}
+      {saveState === "session-expired" && <p className="text-xs text-center" style={{ color: BRAND.red }}>Não guardou — a sua sessão expirou. Clique em "Sair" no topo e volte a entrar, depois tente novamente.</p>}
 
       <div className="rounded-2xl border p-4" style={{ borderColor: "#FCD34D", backgroundColor: "#FFFBEB" }}>
         <p className="text-sm" style={{ color: "#78350F" }}>
@@ -969,6 +999,27 @@ export default function AdminApp() {
     if (s) currentAccessToken = s.access_token;
     return s;
   });
+
+  // Renova a sessão automaticamente antes de expirar, para nunca ficar
+  // com um token inválido a meio do uso (o que antes causava "guardar"
+  // sem efeito, sem nenhum erro visível).
+  useEffect(() => {
+    if (!SUPABASE_CONFIGURED || !session || !session.refresh_token) return;
+    let cancelled = false;
+    const msUntilRefresh = Math.max(session.expires_at - Date.now() - 5 * 60 * 1000, 10 * 1000);
+    const timer = setTimeout(async () => {
+      try {
+        const fresh = await refreshSession(session.refresh_token);
+        if (cancelled) return;
+        currentAccessToken = fresh.access_token;
+        storeSession(fresh);
+        setSession(fresh);
+      } catch (e) {
+        console.error("Não foi possível renovar a sessão:", e);
+      }
+    }, msUntilRefresh);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [session]);
   const [tab, setTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [products, setProducts] = useState(DEFAULT_PRODUCTS);
@@ -982,10 +1033,25 @@ export default function AdminApp() {
 
   useEffect(() => {
     if (SUPABASE_CONFIGURED && session && session.expires_at && session.expires_at < Date.now()) {
-      // Sessão guardada já expirou — força novo login em vez de usar um token inválido.
-      currentAccessToken = null;
-      storeSession(null);
-      setSession(null);
+      if (session.refresh_token) {
+        (async () => {
+          try {
+            const fresh = await refreshSession(session.refresh_token);
+            currentAccessToken = fresh.access_token;
+            storeSession(fresh);
+            setSession(fresh);
+          } catch (e) {
+            console.error("Sessão expirada e não foi possível renovar:", e);
+            currentAccessToken = null;
+            storeSession(null);
+            setSession(null);
+          }
+        })();
+      } else {
+        currentAccessToken = null;
+        storeSession(null);
+        setSession(null);
+      }
       return;
     }
     setBackendStatus(SUPABASE_CONFIGURED ? "loading" : "demo");
